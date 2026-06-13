@@ -202,7 +202,8 @@ export default function HTMLViewer() {
   if (viewing) {
     return (
       <div style={{ width: "100%", height: "100vh", display: "flex", flexDirection: "column", background: COLORS.bg, fontFamily: "system-ui, sans-serif" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 16px", height: 48, minHeight: 48, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, zIndex: 10 }}>
+        {/* Topbar dengan safe area */}
+        <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 16px", paddingTop: "env(safe-area-inset-top)", height: "calc(48px + env(safe-area-inset-top))", minHeight: 48, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, zIndex: 10 }}>
           <button onClick={closeViewer} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: COLORS.text, padding: "4px 8px", borderRadius: 6, fontSize: 13 }}>
             <BackIcon /> Kembali
           </button>
@@ -210,7 +211,25 @@ export default function HTMLViewer() {
           <span style={{ fontSize: 13, color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{viewing.name}</span>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.success, flexShrink: 0 }} />
         </div>
-        <iframe src={viewing.url} style={{ flex: 1, border: "none", background: "#fff" }} title={viewing.name} sandbox="allow-scripts allow-same-origin" />
+        {/* iframe */}
+        <div style={{ flex: 1, position: "relative" }}>
+          <iframe src={viewing.url} style={{ width: "100%", height: "100%", border: "none", background: "#fff" }} title={viewing.name} sandbox="allow-scripts allow-same-origin" />
+          {/* Tombol kembali floating */}
+          <button
+            onClick={closeViewer}
+            style={{
+              position: "absolute", bottom: 28, left: "50%", transform: "translateX(-50%)",
+              background: COLORS.accent, border: "none", borderRadius: 24,
+              padding: "12px 28px", cursor: "pointer",
+              color: "white", fontWeight: 700, fontSize: 14,
+              display: "flex", alignItems: "center", gap: 8,
+              boxShadow: "0 4px 20px rgba(108,99,255,0.5)",
+              zIndex: 99,
+            }}
+          >
+            <BackIcon /> Kembali
+          </button>
+        </div>
       </div>
     );
   }
@@ -219,8 +238,8 @@ export default function HTMLViewer() {
   return (
     <div style={{ width: "100%", minHeight: "100vh", background: COLORS.bg, color: COLORS.text, fontFamily: "system-ui, -apple-system, sans-serif", display: "flex", flexDirection: "column" }}>
 
-      {/* Header */}
-      <div style={{ padding: "18px 16px 14px", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.surface }}>
+      {/* Header dengan safe area padding */}
+      <div style={{ padding: "18px 16px 14px", paddingTop: "calc(18px + env(safe-area-inset-top))", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.surface }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none">
