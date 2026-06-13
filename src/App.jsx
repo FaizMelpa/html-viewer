@@ -386,4 +386,17 @@ export default function HTMLViewer() {
                         </div>
                       </div>
                     </div>
-                    <button on
+                    <button onClick={(e) => { e.stopPropagation(); removeHistory(item.id); }}
+                      style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4, borderRadius: 4, flexShrink: 0 }}>
+                      <CloseIcon color={COLORS.textDim} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
