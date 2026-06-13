@@ -382,8 +382,8 @@ export default function HTMLViewer() {
                         <div style={{ fontSize: 14, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
                         <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
                           {timeAgo(item.ts)} · {formatSize(item.size)}
-                          <span style={{ marginLeft: 6, color: COLORS.success, fontSize: 10 }}>✓ tersimpan</span>
+                          <span style={{ marginLeft: 6, color: COLORS.success, fontSize: 10 }}>tersimpan</span>
                         </div>
                       </div>
                     </div>
-                    <button 
+                    <button on
