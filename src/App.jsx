@@ -16,6 +16,18 @@ const COLORS = {
 };
 
 const MAX_HISTORY = 20;
+const STORAGE_KEY = "htmlviewer_history_v2";
+const FILES_KEY = "htmlviewer_files_v2";
+
+// Simpan file sebagai base64 di localStorage
+async function fileToBase64(file) {
+  return new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result); // data:text/html;base64,...
+    r.onerror = rej;
+    r.readAsDataURL(file);
+  });
+}
 
 function FileIcon({ type }) {
   if (type === "folder") return (
@@ -63,21 +75,17 @@ function FileTree({ node, onOpen }) {
   const [expanded, setExpanded] = useState({});
   const folders = Object.values(node.children);
   const files = node.files;
-
   if (folders.length === 0 && files.length === 0) {
     return <div style={{ padding: "32px 16px", textAlign: "center", color: COLORS.textDim, fontSize: 13 }}>Tidak ada file HTML ditemukan</div>;
   }
-
   return (
     <div>
       {folders.map(folder => (
         <div key={folder.name}>
-          <div
-            onClick={() => setExpanded(e => ({ ...e, [folder.name]: !e[folder.name] }))}
+          <div onClick={() => setExpanded(e => ({ ...e, [folder.name]: !e[folder.name] }))}
             style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", cursor: "pointer", color: COLORS.text, fontSize: 14, borderBottom: `1px solid ${COLORS.border}` }}
             onMouseEnter={e => e.currentTarget.style.background = COLORS.surfaceHover}
-            onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-          >
+            onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
             <span style={{ color: COLORS.textDim, fontSize: 12, width: 14 }}>{expanded[folder.name] ? "▾" : "▸"}</span>
             <FileIcon type="folder" />
             <span>{folder.name}</span>
@@ -91,13 +99,10 @@ function FileTree({ node, onOpen }) {
         </div>
       ))}
       {files.map(({ name, file }) => (
-        <div
-          key={name}
-          onClick={() => onOpen(file, name)}
+        <div key={name} onClick={() => onOpen(file, name)}
           style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", cursor: "pointer", color: COLORS.text, fontSize: 14, borderBottom: `1px solid ${COLORS.border}` }}
           onMouseEnter={e => e.currentTarget.style.background = COLORS.surfaceHover}
-          onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-        >
+          onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
           <span style={{ width: 14 }} />
           <FileIcon type="html" />
           <span style={{ flex: 1 }}>{name}</span>
@@ -116,45 +121,57 @@ function timeAgo(ts) {
   return `${Math.floor(diff / 86400)} hari lalu`;
 }
 
-// TAB IDs
+function formatSize(bytes) {
+  return (bytes / 1024).toFixed(1) + " KB";
+}
+
 const TAB_FILES = "files";
 const TAB_HISTORY = "history";
 
 export default function HTMLViewer() {
   const [tree, setTree] = useState(null);
   const [folderName, setFolderName] = useState("");
-  const [viewing, setViewing] = useState(null);
+  const [viewing, setViewing] = useState(null); // { dataUrl, name, size }
   const [totalFiles, setTotalFiles] = useState(0);
   const [tab, setTab] = useState(TAB_FILES);
   const [history, setHistory] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("htmlviewer_history") || "[]"); } catch { return []; }
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || "[]"); } catch { return []; }
   });
+  const [saving, setSaving] = useState(false);
   const folderInputRef = useRef();
   const fileInputRef = useRef();
-  // store file objects for history re-open (in-memory only, lost on reload)
-  const fileCache = useRef({});
 
+  // Simpan history ke localStorage
   useEffect(() => {
-    try { localStorage.setItem("htmlviewer_history", JSON.stringify(history)); } catch {}
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(history)); } catch {}
   }, [history]);
 
-  const addHistory = useCallback((name, size, fileObj) => {
-    const id = `${name}_${size}`;
-    fileCache.current[id] = fileObj;
-    setHistory(prev => {
-      const filtered = prev.filter(h => h.id !== id);
-      return [{ id, name, size, ts: Date.now() }, ...filtered].slice(0, MAX_HISTORY);
-    });
-  }, []);
-
-  const clearHistory = useCallback(() => {
-    setHistory([]);
-    fileCache.current = {};
-  }, []);
-
-  const removeHistory = useCallback((id) => {
-    setHistory(prev => prev.filter(h => h.id !== id));
-    delete fileCache.current[id];
+  const saveFileToStorage = useCallback(async (file, name) => {
+    setSaving(true);
+    try {
+      const dataUrl = await fileToBase64(file);
+      const id = `file_${Date.now()}_${name.replace(/[^a-z0-9]/gi, "_")}`;
+      // Simpan konten file
+      try { localStorage.setItem(`${FILES_KEY}_${id}`, dataUrl); } catch {
+        // localStorage penuh, hapus file lama
+        const keys = Object.keys(localStorage).filter(k => k.startsWith(FILES_KEY));
+        if (keys.length > 0) localStorage.removeItem(keys[0]);
+        localStorage.setItem(`${FILES_KEY}_${id}`, dataUrl);
+      }
+      // Update history
+      setHistory(prev => {
+        // Hapus file lama dari storage kalau ada entry sama
+        const old = prev.find(h => h.name === name && Math.abs(h.size - file.size) < 100);
+        if (old) {
+          try { localStorage.removeItem(`${FILES_KEY}_${old.id}`); } catch {}
+        }
+        const filtered = prev.filter(h => !(h.name === name && Math.abs(h.size - file.size) < 100));
+        return [{ id, name, size: file.size, ts: Date.now() }, ...filtered].slice(0, MAX_HISTORY);
+      });
+      return dataUrl;
+    } finally {
+      setSaving(false);
+    }
   }, []);
 
   const handleFolder = useCallback((e) => {
@@ -177,32 +194,44 @@ export default function HTMLViewer() {
     openFile(file, file.name);
   }, []);
 
-  const openFile = useCallback((file, name) => {
-    const url = URL.createObjectURL(file);
-    setViewing({ url, name });
-    addHistory(name, file.size, file);
-  }, [addHistory]);
+  const openFile = useCallback(async (file, name) => {
+    const dataUrl = await saveFileToStorage(file, name);
+    setViewing({ dataUrl, name, size: file.size });
+  }, [saveFileToStorage]);
 
   const openFromHistory = useCallback((item) => {
-    const fileObj = fileCache.current[item.id];
-    if (!fileObj) {
-      alert("File tidak tersedia lagi di memori. Silakan buka ulang filenya.");
-      return;
+    try {
+      const dataUrl = localStorage.getItem(`${FILES_KEY}_${item.id}`);
+      if (!dataUrl) {
+        alert("File tidak ditemukan di penyimpanan. Silakan buka ulang filenya.");
+        return;
+      }
+      setViewing({ dataUrl, name: item.name, size: item.size });
+    } catch {
+      alert("Gagal membuka file.");
     }
-    const url = URL.createObjectURL(fileObj);
-    setViewing({ url, name: item.name });
   }, []);
 
+  const removeHistory = useCallback((id) => {
+    try { localStorage.removeItem(`${FILES_KEY}_${id}`); } catch {}
+    setHistory(prev => prev.filter(h => h.id !== id));
+  }, []);
+
+  const clearHistory = useCallback(() => {
+    history.forEach(h => {
+      try { localStorage.removeItem(`${FILES_KEY}_${h.id}`); } catch {}
+    });
+    setHistory([]);
+  }, [history]);
+
   const closeViewer = useCallback(() => {
-    if (viewing?.url) URL.revokeObjectURL(viewing.url);
     setViewing(null);
-  }, [viewing]);
+  }, []);
 
   // === VIEWER ===
   if (viewing) {
     return (
       <div style={{ width: "100%", height: "100vh", display: "flex", flexDirection: "column", background: COLORS.bg, fontFamily: "system-ui, sans-serif" }}>
-        {/* Topbar dengan safe area */}
         <div style={{ display: "flex", alignItems: "center", gap: 12, padding: "0 16px", paddingTop: "env(safe-area-inset-top)", height: "calc(48px + env(safe-area-inset-top))", minHeight: 48, background: COLORS.surface, borderBottom: `1px solid ${COLORS.border}`, zIndex: 10 }}>
           <button onClick={closeViewer} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: COLORS.text, padding: "4px 8px", borderRadius: 6, fontSize: 13 }}>
             <BackIcon /> Kembali
@@ -211,22 +240,16 @@ export default function HTMLViewer() {
           <span style={{ fontSize: 13, color: COLORS.textMuted, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{viewing.name}</span>
           <div style={{ width: 8, height: 8, borderRadius: "50%", background: COLORS.success, flexShrink: 0 }} />
         </div>
-        {/* iframe */}
         <div style={{ flex: 1, position: "relative" }}>
-          <iframe src={viewing.url} style={{ width: "100%", height: "100%", border: "none", background: "#fff" }} title={viewing.name} sandbox="allow-scripts allow-same-origin" />
-          {/* Tombol kembali floating */}
-          <button
-            onClick={closeViewer}
-            style={{
-              position: "absolute", bottom: 28, left: "50%", transform: "translateX(-50%)",
-              background: COLORS.accent, border: "none", borderRadius: 24,
-              padding: "12px 28px", cursor: "pointer",
-              color: "white", fontWeight: 700, fontSize: 14,
-              display: "flex", alignItems: "center", gap: 8,
-              boxShadow: "0 4px 20px rgba(108,99,255,0.5)",
-              zIndex: 99,
-            }}
-          >
+          <iframe src={viewing.dataUrl} style={{ width: "100%", height: "100%", border: "none", background: "#fff" }} title={viewing.name} sandbox="allow-scripts allow-same-origin" />
+          <button onClick={closeViewer} style={{
+            position: "absolute", bottom: 28, left: "50%", transform: "translateX(-50%)",
+            background: COLORS.accent, border: "none", borderRadius: 24,
+            padding: "12px 28px", cursor: "pointer",
+            color: "white", fontWeight: 700, fontSize: 14,
+            display: "flex", alignItems: "center", gap: 8,
+            boxShadow: "0 4px 20px rgba(108,99,255,0.5)", zIndex: 99,
+          }}>
             <BackIcon /> Kembali
           </button>
         </div>
@@ -238,7 +261,7 @@ export default function HTMLViewer() {
   return (
     <div style={{ width: "100%", minHeight: "100vh", background: COLORS.bg, color: COLORS.text, fontFamily: "system-ui, -apple-system, sans-serif", display: "flex", flexDirection: "column" }}>
 
-      {/* Header dengan safe area padding */}
+      {/* Header */}
       <div style={{ padding: "18px 16px 14px", paddingTop: "calc(18px + env(safe-area-inset-top))", borderBottom: `1px solid ${COLORS.border}`, background: COLORS.surface }}>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <div style={{ width: 34, height: 34, borderRadius: 10, background: COLORS.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
@@ -258,14 +281,12 @@ export default function HTMLViewer() {
       <div style={{ padding: "14px 16px 0", display: "flex", gap: 10 }}>
         <button onClick={() => folderInputRef.current.click()}
           style={{ flex: 1, padding: "11px 8px", background: COLORS.accent, border: "none", borderRadius: 10, cursor: "pointer", color: "white", fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-          onMouseEnter={e => e.currentTarget.style.opacity = "0.85"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}
-        >
+          onMouseEnter={e => e.currentTarget.style.opacity = "0.85"} onMouseLeave={e => e.currentTarget.style.opacity = "1"}>
           <FolderOpenIcon /> Buka Folder
         </button>
         <button onClick={() => fileInputRef.current.click()}
           style={{ flex: 1, padding: "11px 8px", background: COLORS.surface, border: `1px solid ${COLORS.border}`, borderRadius: 10, cursor: "pointer", color: COLORS.text, fontWeight: 600, fontSize: 14, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}
-          onMouseEnter={e => e.currentTarget.style.background = COLORS.surfaceHover} onMouseLeave={e => e.currentTarget.style.background = COLORS.surface}
-        >
+          onMouseEnter={e => e.currentTarget.style.background = COLORS.surfaceHover} onMouseLeave={e => e.currentTarget.style.background = COLORS.surface}>
           <FileIcon type="html" /> Buka File
         </button>
       </div>
@@ -273,15 +294,22 @@ export default function HTMLViewer() {
       <input ref={folderInputRef} type="file" webkitdirectory="" multiple style={{ display: "none" }} onChange={handleFolder} />
       <input ref={fileInputRef} type="file" accept=".html,.htm" style={{ display: "none" }} onChange={handleFile} />
 
+      {/* Saving indicator */}
+      {saving && (
+        <div style={{ margin: "8px 16px 0", padding: "8px 12px", background: COLORS.accentDim, borderRadius: 8, fontSize: 12, color: COLORS.text, textAlign: "center" }}>
+          Menyimpan file...
+        </div>
+      )}
+
       {/* Tabs */}
       <div style={{ display: "flex", margin: "14px 16px 0", background: COLORS.surface, borderRadius: 10, padding: 4, gap: 4 }}>
         {[{ id: TAB_FILES, label: "File" }, { id: TAB_HISTORY, label: `Riwayat${history.length ? ` (${history.length})` : ""}` }].map(t => (
           <button key={t.id} onClick={() => setTab(t.id)}
             style={{ flex: 1, padding: "7px 0", borderRadius: 7, border: "none", cursor: "pointer", fontSize: 13, fontWeight: 600, transition: "all 0.15s",
               background: tab === t.id ? COLORS.accent : "transparent",
-              color: tab === t.id ? "white" : COLORS.textMuted,
-            }}
-          >{t.label}</button>
+              color: tab === t.id ? "white" : COLORS.textMuted }}>
+            {t.label}
+          </button>
         ))}
       </div>
 
@@ -334,44 +362,28 @@ export default function HTMLViewer() {
                 </div>
                 <div>
                   <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 6 }}>Belum ada riwayat</div>
-                  <div style={{ fontSize: 13, color: COLORS.textMuted }}>File yang pernah lo buka akan muncul di sini.</div>
+                  <div style={{ fontSize: 13, color: COLORS.textMuted }}>File yang pernah lo buka akan tersimpan di sini.</div>
                 </div>
               </div>
             ) : (
               <div>
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 16px", borderBottom: `1px solid ${COLORS.border}` }}>
-                  <span style={{ fontSize: 12, color: COLORS.textMuted }}>{history.length} file terakhir dibuka</span>
-                  <button onClick={clearHistory}
-                    style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: COLORS.danger, padding: "2px 6px", borderRadius: 4 }}
-                  >Hapus semua</button>
+                  <span style={{ fontSize: 12, color: COLORS.textMuted }}>{history.length} file tersimpan</span>
+                  <button onClick={clearHistory} style={{ background: "none", border: "none", cursor: "pointer", fontSize: 12, color: COLORS.danger, padding: "2px 6px", borderRadius: 4 }}>Hapus semua</button>
                 </div>
                 {history.map(item => (
                   <div key={item.id}
                     style={{ display: "flex", alignItems: "center", gap: 10, padding: "11px 16px", borderBottom: `1px solid ${COLORS.border}`, cursor: "pointer" }}
                     onMouseEnter={e => e.currentTarget.style.background = COLORS.surfaceHover}
-                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}
-                  >
+                    onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
                     <div onClick={() => openFromHistory(item)} style={{ display: "flex", alignItems: "center", gap: 10, flex: 1, minWidth: 0 }}>
                       <FileIcon type="html" />
                       <div style={{ minWidth: 0 }}>
                         <div style={{ fontSize: 14, color: COLORS.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.name}</div>
                         <div style={{ fontSize: 11, color: COLORS.textMuted, marginTop: 2 }}>
-                          {timeAgo(item.ts)} · {(item.size / 1024).toFixed(1)} KB
+                          {timeAgo(item.ts)} · {formatSize(item.size)}
+                          <span style={{ marginLeft: 6, color: COLORS.success, fontSize: 10 }}>✓ tersimpan</span>
                         </div>
                       </div>
                     </div>
-                    <button onClick={(e) => { e.stopPropagation(); removeHistory(item.id); }}
-                      style={{ background: "none", border: "none", cursor: "pointer", display: "flex", padding: 4, borderRadius: 4, flexShrink: 0 }}
-                    >
-                      <CloseIcon color={COLORS.textDim} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
+                    <button 
